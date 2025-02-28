@@ -1,64 +1,92 @@
-// handlers/handlers.go
 package handlers
 
 import (
-	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
+
+	"linkqu-be-go/config"
 
 	"github.com/labstack/echo/v4"
 )
 
-// DB instance
-var DB *sql.DB
-
-// Struct untuk request body
+// Struct re body
 type RequestBody struct {
-    Data string `json:"data"`
+	Data string `json:"data"`
 }
 
-// InsertUser adalah handler untuk menambahkan user ke database
-func CreateUser(c echo.Context) error {  // Make sure the function starts with an uppercase letter
-    req := new(RequestBody)
-    if err := c.Bind(req); err != nil {
-        return c.JSON(http.StatusBadRequest, map[string]string{"message": "Invalid request"})
-    }
+func CreateUser(c echo.Context) error {
+	req := new(RequestBody)
 
-    data := strings.TrimSpace(req.Data)
-    if data == "" {
-        return c.JSON(http.StatusBadRequest, map[string]string{"message": "Data field is required."})
-    }
+	// validasi input
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"message": "Invalid request"})
+	}
 
-    arrayString := strings.Fields(data)
-    if len(arrayString) < 3 {
-        return c.JSON(http.StatusBadRequest, map[string]string{"message": "Input not valid"})
-    }
+	data := strings.TrimSpace(req.Data)
+	if data == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"message": "Data field is required."})
+	}
 
-    var name, age, city string
-    ageIndex := -1
+	arrayString := strings.Fields(data)
+	if len(arrayString) < 3 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"message": "Input not valid"})
+	}
 
-    for i, word := range arrayString {
-        if age == "" && strings.HasPrefix(word, "0") || strings.HasPrefix(word, "1") || strings.HasPrefix(word, "2") {
-            age = word
-            ageIndex = i
-            continue
-        }
+	var name, age, city string
+	ageIndex := -1
 
-        if ageIndex == -1 {
-            name += strings.ToUpper(word) + " "
-        } else if i > ageIndex && word != "th" && word != "thn" && word != "tahun" {
-            city += strings.ToUpper(word) + " "
-        }
-    }
+	// Regex check number
+	re := regexp.MustCompile(`^\d+`)
 
-    // Insert data ke database
-    query := `INSERT INTO users (name, age, city) VALUES ($1, $2, $3)`
-    _, err := DB.Exec(query, strings.TrimSpace(name), age, strings.TrimSpace(city))
-    if err != nil {
-        log.Println("Error inserting data into database:", err)
-        return c.JSON(http.StatusInternalServerError, map[string]string{"message": "Error storing data in the database"})
-    }
+	for i, word := range arrayString {
+		// save number as age with index
+		if re.MatchString(word) {
+			age = re.FindString(word)
+			ageIndex = i
+		}
 
-    return c.JSON(http.StatusCreated, map[string]string{"message": "Succeed"})
+		// save name
+		if age == "" {
+			name += strings.ToUpper(word) + " "
+			continue
+		}
+
+		// save city
+		if i > ageIndex && word != "th" && word != "thn" && word != "tahun" {
+			city += strings.ToUpper(word) + " "
+		}
+	}
+
+	// clear space
+	name = strings.TrimSpace(name)
+	city = strings.TrimSpace(city)
+
+	// Debug log
+	debug := fmt.Sprintf("Insert User - Name: %s, Age: %s, City: %s", name, age, city)
+	log.Printf(debug)
+
+	// check db connection
+	sqlDB, err := config.DB.DB()
+	if err != nil {
+		log.Println("Error connect database:", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "Database connection failed"})
+	}
+	err = sqlDB.Ping()
+	if err != nil {
+		log.Println(" Database TO:", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "Database is unreachable"})
+	}
+	log.Println("Database connented")
+
+	query := `INSERT INTO users (name, age, city) VALUES (?, ?, ?)`
+	err = config.DB.Exec(query, name, age, city).Error
+	if err != nil {
+		log.Println("Error insert", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "Error storing data in the database"})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"message": "Succeed "+debug, })
 }
